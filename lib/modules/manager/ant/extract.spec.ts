@@ -5,6 +5,10 @@ import { extractAllPackageFiles, extractPackageFile } from './extract.ts';
 vi.mock('../../../util/fs/index.ts');
 
 describe('modules/manager/ant/extract', () => {
+  beforeEach(() => {
+    fs.isValidLocalPath.mockReturnValue(true);
+  });
+
   describe('extractPackageFile', () => {
     it('extracts inline version dependencies from build.xml', () => {
       expect(
@@ -25,7 +29,6 @@ describe('modules/manager/ant/extract', () => {
             depName: 'junit:junit',
             currentValue: '4.13.2',
             depType: 'test',
-            registryUrls: [],
           }),
         ],
       });
@@ -616,6 +619,737 @@ describe('modules/manager/ant/extract', () => {
       expect(result).toEqual([
         {
           packageFile: 'versions.properties',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('follows import file references', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <import file="deps.xml" />
+            </project>
+          `,
+          'deps.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'deps.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('skips missing import files', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <import file="missing.xml" />
+              <artifact:dependencies>
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('does not loop on self-importing files', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <import file="build.xml" />
+              <artifact:dependencies>
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('shares properties across imported files', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <property name="junit.version" value="4.13.2" />
+              <import file="deps.xml" />
+            </project>
+          `,
+          'deps.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <dependency groupId="junit" artifactId="junit" version="\${junit.version}" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(fs.readLocalFile).toHaveBeenCalledWith('deps.xml', 'utf8');
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+              sharedVariableName: 'junit.version',
+              editFile: 'build.xml',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('extracts dependency from 3-part coords attribute', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <dependency coords="junit:junit:4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              datasource: 'maven',
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+              depType: 'compile',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('extracts scope from 4-part coords attribute', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <dependency coords="junit:junit:4.13.2:test" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+              depType: 'test',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('ignores coords with fewer than 3 parts', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <dependency coords="junit:junit" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      await expect(
+        extractAllPackageFiles({}, ['build.xml']),
+      ).resolves.toBeNull();
+    });
+
+    it('ignores coords with empty groupId', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <dependency coords=":junit:4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      await expect(
+        extractAllPackageFiles({}, ['build.xml']),
+      ).resolves.toBeNull();
+    });
+
+    it('resolves property references in coords version', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <property name="junit.version" value="4.13.2" />
+              <artifact:dependencies>
+                <dependency coords="junit:junit:\${junit.version}" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+              sharedVariableName: 'junit.version',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('marks coords dependency with unresolvable property', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <dependency coords="junit:junit:\${missing}" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              skipReason: 'version-placeholder',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('treats last part as version when it is not a known scope', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <dependency coords="org.example:lib:jar:1.0.0" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'org.example:lib',
+              currentValue: '1.0.0',
+              depType: 'compile',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('collects registry URLs from remoteRepository elements', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <remoteRepository url="https://repo.example.com/maven2" />
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              registryUrls: ['https://repo.example.com/maven2'],
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('passes registry URLs to coords-style dependencies', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <remoteRepository url="https://repo.example.com/maven2" />
+                <dependency coords="junit:junit:4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              registryUrls: ['https://repo.example.com/maven2'],
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('collects registry URLs from settingsFile attribute', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies settingsFile="build/settings.xml">
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+          'build/settings.xml': codeBlock`
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <url>https://artifactory.example.com/maven</url>
+                </mirror>
+              </mirrors>
+            </settings>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              registryUrls: ['https://artifactory.example.com/maven'],
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('merges registries from settingsFile and remoteRepository', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies settingsFile="build/settings.xml">
+                <remoteRepository url="https://repo.example.com/maven2" />
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+          'build/settings.xml': codeBlock`
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <url>https://artifactory.example.com/maven</url>
+                </mirror>
+              </mirrors>
+            </settings>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              registryUrls: [
+                'https://artifactory.example.com/maven',
+                'https://repo.example.com/maven2',
+              ],
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('handles absolute settingsFile path', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies settingsFile="/etc/maven/settings.xml">
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+          '/etc/maven/settings.xml': codeBlock`
+            <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+              <mirrors>
+                <mirror>
+                  <url>https://internal.example.com/maven</url>
+                </mirror>
+              </mirrors>
+            </settings>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              registryUrls: ['https://internal.example.com/maven'],
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('logs debug when settingsFile cannot be read', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies settingsFile="missing/settings.xml">
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('does not pass registries to dependencies outside the block', async () => {
+      fs.readLocalFile.mockImplementation((fileName: string) => {
+        const files: Record<string, string> = {
+          'build.xml': codeBlock`
+            <project>
+              <artifact:dependencies>
+                <remoteRepository url="https://repo.example.com/maven2" />
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+              <artifact:dependencies>
+                <dependency groupId="org.slf4j" artifactId="slf4j-api" version="1.7.36" />
+              </artifact:dependencies>
+            </project>
+          `,
+        };
+        return Promise.resolve(files[fileName] ?? null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              registryUrls: ['https://repo.example.com/maven2'],
+            }),
+            expect.objectContaining({
+              depName: 'org.slf4j:slf4j-api',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('skips property file references with unresolved placeholders in path', async () => {
+      fs.readLocalFile.mockImplementation((file: string) => {
+        if (file === 'build.xml') {
+          return Promise.resolve(codeBlock`
+            <project>
+              <property file="\${included.basedir}/../\${user.name}.properties"/>
+              <artifact:dependencies>
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `);
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(fs.readLocalFile).toHaveBeenCalledTimes(1);
+      expect(fs.readLocalFile).toHaveBeenCalledWith('build.xml', 'utf8');
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('skips property file references that resolve outside the repository', async () => {
+      fs.isValidLocalPath.mockImplementation(
+        (file: string) => !file.includes('..'),
+      );
+      fs.readLocalFile.mockImplementation((file: string) => {
+        if (file === 'build.xml') {
+          return Promise.resolve(codeBlock`
+            <project>
+              <property file="/../../../some.properties"/>
+              <artifact:dependencies>
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `);
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(fs.readLocalFile).toHaveBeenCalledTimes(1);
+      expect(fs.readLocalFile).toHaveBeenCalledWith('build.xml', 'utf8');
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('skips import file references that resolve outside the repository', async () => {
+      fs.isValidLocalPath.mockImplementation(
+        (file: string) => !file.includes('..'),
+      );
+      fs.readLocalFile.mockImplementation((file: string) => {
+        if (file === 'build.xml') {
+          return Promise.resolve(codeBlock`
+            <project>
+              <import file="../../../outside/build.xml"/>
+              <artifact:dependencies>
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `);
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(fs.readLocalFile).toHaveBeenCalledTimes(1);
+      expect(fs.readLocalFile).toHaveBeenCalledWith('build.xml', 'utf8');
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('skips settingsFile references that resolve outside the repository', async () => {
+      fs.isValidLocalPath.mockImplementation(
+        (file: string) => !file.includes('..'),
+      );
+      fs.readLocalFile.mockImplementation((file: string) => {
+        if (file === 'build.xml') {
+          return Promise.resolve(codeBlock`
+            <project>
+              <artifact:dependencies settingsFile="/../../etc/settings.xml">
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `);
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(fs.readLocalFile).toHaveBeenCalledTimes(1);
+      expect(fs.readLocalFile).toHaveBeenCalledWith('build.xml', 'utf8');
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
+          deps: [
+            expect.objectContaining({
+              depName: 'junit:junit',
+              currentValue: '4.13.2',
+            }),
+          ],
+        },
+      ]);
+    });
+
+    it('skips import file references with unresolved placeholders in path', async () => {
+      fs.readLocalFile.mockImplementation((file: string) => {
+        if (file === 'build.xml') {
+          return Promise.resolve(codeBlock`
+            <project>
+              <import file="\${user.name}/build.xml"/>
+              <artifact:dependencies>
+                <dependency groupId="junit" artifactId="junit" version="4.13.2" />
+              </artifact:dependencies>
+            </project>
+          `);
+        }
+        return Promise.resolve(null);
+      });
+
+      const result = await extractAllPackageFiles({}, ['build.xml']);
+
+      expect(fs.readLocalFile).toHaveBeenCalledTimes(1);
+      expect(fs.readLocalFile).toHaveBeenCalledWith('build.xml', 'utf8');
+      expect(result).toEqual([
+        {
+          packageFile: 'build.xml',
           deps: [
             expect.objectContaining({
               depName: 'junit:junit',
