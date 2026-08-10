@@ -26,10 +26,14 @@ import {
 } from '@opentelemetry/semantic-conventions';
 import { isPromise } from '@sindresorhus/is';
 import { pkg } from '../expose.ts';
+import { GetDatasourceReleasesSpanProcessor } from '../modules/datasource/span-processor.ts';
 import { GitOperationSpanProcessor } from '../util/git/span-processor.ts';
 import { getResourceDetectors } from './detectors.ts';
+import { FileSpanExporter } from './file-exporter.ts';
 import type { RenovateSpanOptions } from './types.ts';
 import {
+  getFileExporterPath,
+  isFileExporterEnabled,
   isTraceDebuggingEnabled,
   isTraceSendingEnabled,
   isTracingEnabled,
@@ -39,7 +43,10 @@ import {
 let instrumentations: Instrumentation[] = [];
 
 export function init(): void {
-  const spanProcessors: SpanProcessor[] = [new GitOperationSpanProcessor()];
+  const spanProcessors: SpanProcessor[] = [
+    new GitOperationSpanProcessor(),
+    new GetDatasourceReleasesSpanProcessor(),
+  ];
 
   if (!isTracingEnabled()) {
     const traceProvider = new NodeTracerProvider({ spanProcessors });
@@ -68,6 +75,12 @@ export function init(): void {
   if (isTraceSendingEnabled()) {
     const exporter = new OTLPTraceExporter();
     spanProcessors.push(new BatchSpanProcessor(exporter));
+  }
+
+  if (isFileExporterEnabled()) {
+    spanProcessors.push(
+      new BatchSpanProcessor(new FileSpanExporter(getFileExporterPath())),
+    );
   }
 
   const env = process.env; // don't use getEnv() here to avoid circular dependency with env variables used in the resource detectors

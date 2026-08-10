@@ -1,3 +1,4 @@
+import miseRegistry from '../../../data/mise-registry.json' with { type: 'json' };
 import { regEx } from '../../../util/regex.ts';
 import { GithubReleasesDatasource } from '../../datasource/github-releases/index.ts';
 import { GithubTagsDatasource } from '../../datasource/github-tags/index.ts';
@@ -6,11 +7,14 @@ import { JavaVersionDatasource } from '../../datasource/java-version/index.ts';
 import { NodeVersionDatasource } from '../../datasource/node-version/index.ts';
 import { NpmDatasource } from '../../datasource/npm/index.ts';
 import { RubyVersionDatasource } from '../../datasource/ruby-version/index.ts';
+import { RustVersionDatasource } from '../../datasource/rust-version/index.ts';
 import * as regexVersioning from '../../versioning/regex/index.ts';
 import * as semverVersioning from '../../versioning/semver/index.ts';
 import * as semverPartialVersioning from '../../versioning/semver-partial/index.ts';
 import type { ToolingConfig } from '../asdf/upgradeable-tooling.ts';
 import { upgradeableTooling } from '../asdf/upgradeable-tooling.ts';
+import { MiseRegistryJson } from './schema.ts';
+import type { MiseRegistryData } from './types.ts';
 
 export interface ToolingDefinition {
   config: ToolingConfig;
@@ -175,8 +179,8 @@ const miseCoreTooling: Record<string, ToolingDefinition> = {
   rust: {
     misePluginUrl: 'https://mise.jdx.dev/lang/rust.html',
     config: {
-      packageName: 'rust-lang/rust',
-      datasource: GithubTagsDatasource.id,
+      packageName: 'rust',
+      datasource: RustVersionDatasource.id,
     },
   },
   swift: {
@@ -250,6 +254,14 @@ const miseRegistryTooling: Record<string, ToolingDefinition> = {
       packageName: 'ccache/ccache',
       datasource: GithubReleasesDatasource.id,
       extractVersion: '^v(?<version>\\S+)',
+    },
+  },
+  'clang-format': {
+    misePluginUrl: 'https://mise.jdx.dev/registry.html#tools',
+    config: {
+      packageName: 'llvm/llvm-project',
+      datasource: GithubReleasesDatasource.id,
+      extractVersion: '^llvmorg-(?<version>\\S+)',
     },
   },
   committed: {
@@ -414,6 +426,13 @@ const miseRegistryTooling: Record<string, ToolingDefinition> = {
       extractVersion: '^v(?<version>\\S+)',
     },
   },
+  pnpm: {
+    misePluginUrl: 'https://mise.jdx.dev/registry.html#tools',
+    config: {
+      packageName: 'pnpm',
+      datasource: NpmDatasource.id,
+    },
+  },
   redis: {
     misePluginUrl: 'https://mise.jdx.dev/registry.html#tools',
     config: {
@@ -535,9 +554,26 @@ const miseRegistryTooling: Record<string, ToolingDefinition> = {
       extractVersion: '^v(?<version>\\S+)',
     },
   },
+  yarn: {
+    misePluginUrl: 'https://mise.jdx.dev/registry.html#tools',
+    config: {
+      packageName: '@yarnpkg/cli',
+      datasource: NpmDatasource.id,
+    },
+  },
 };
 
 export const miseTooling: Record<string, ToolingDefinition> = {
   ...miseCoreTooling,
   ...miseRegistryTooling,
 };
+
+export const parsedMiseRegistry: MiseRegistryData = Object.freeze(
+  MiseRegistryJson.parse(miseRegistry),
+);
+
+export function getOrderedMiseRegistryBackends(
+  toolName: string,
+): Record<string, string> {
+  return parsedMiseRegistry.tools[toolName] ?? [];
+}
