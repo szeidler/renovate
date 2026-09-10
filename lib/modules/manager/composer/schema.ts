@@ -335,6 +335,36 @@ export const ComposerExtract = z
       }
     }
 
+    const directDepNames = new Set([
+      ...Object.keys(require),
+      ...Object.keys(requireDev),
+    ]);
+    for (const lockedDep of [
+      ...(lockfile?.packages ?? []),
+      ...(lockfile?.packagesDev ?? []),
+    ]) {
+      if (
+        directDepNames.has(lockedDep.name) ||
+        !semverComposer.isVersion(lockedDep.version)
+      ) {
+        continue;
+      }
+
+      const dep: PackageDependency = {
+        depType: 'indirect',
+        depName: lockedDep.name,
+        datasource: PackagistDatasource.id,
+        lockedVersion: lockedDep.version.replace(regEx(/^v/i), ''),
+        enabled: false,
+      };
+
+      if (registryUrls) {
+        dep.registryUrls = registryUrls;
+      }
+
+      deps.push(dep);
+    }
+
     if (!deps.length) {
       return null;
     }

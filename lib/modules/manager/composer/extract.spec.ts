@@ -276,6 +276,17 @@ describe('modules/manager/composer/extract', () => {
             lockedVersion: '1.2.0',
             packageName: 'git@my-git.example:my-git-repo',
           },
+          {
+            datasource: 'packagist',
+            depName: 'awesome/dev-tool',
+            depType: 'indirect',
+            enabled: false,
+            lockedVersion: '2.1.0',
+            registryUrls: [
+              'https://wpackagist.org',
+              'https://repo.packagist.org',
+            ],
+          },
         ],
         lockFiles: ['composer.lock'],
       });

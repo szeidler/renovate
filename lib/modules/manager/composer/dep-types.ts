@@ -9,4 +9,8 @@ export const knownDepTypes = [
     depType: 'require-dev',
     description: 'Development dependency from `require-dev` section',
   },
+  {
+    depType: 'indirect',
+    description: 'Transitive dependency from `composer.lock`',
+  },
 ] as const satisfies readonly DepTypeMetadata[];
