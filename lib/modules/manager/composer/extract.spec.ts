@@ -280,7 +280,6 @@ describe('modules/manager/composer/extract', () => {
             datasource: 'packagist',
             depName: 'awesome/dev-tool',
             depType: 'indirect',
-            enabled: false,
             lockedVersion: '2.1.0',
             registryUrls: [
               'https://wpackagist.org',

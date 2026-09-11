@@ -82,6 +82,38 @@ describe('workers/repository/process/fetch', () => {
       expect(packageFiles.npm[0].deps[1].updates).toHaveLength(0);
     });
 
+    it('disables deps using package rule depType matching', async () => {
+      config.packageRules = [
+        {
+          matchDepTypes: ['indirect'],
+          enabled: false,
+        },
+      ];
+      const packageFiles: Record<string, PackageFile[]> = {
+        composer: [
+          {
+            packageFile: 'composer.json',
+            deps: [
+              {
+                datasource: 'packagist',
+                depName: 'foo/bar',
+                depType: 'indirect',
+              },
+            ],
+          },
+        ],
+      };
+
+      await fetchUpdates(config, packageFiles);
+
+      expect(packageFiles.composer[0].deps[0]).toMatchObject({
+        depName: 'foo/bar',
+        depType: 'indirect',
+        skipReason: 'disabled',
+        updates: [],
+      });
+    });
+
     it('fetches updates', async () => {
       config.rangeStrategy = 'auto';
       // @ts-expect-error -- intentionally using invalid constraint names

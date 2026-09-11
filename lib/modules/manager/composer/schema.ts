@@ -355,7 +355,6 @@ export const ComposerExtract = z
         depName: lockedDep.name,
         datasource: PackagistDatasource.id,
         lockedVersion: lockedDep.version.replace(regEx(/^v/i), ''),
-        enabled: false,
       };
 
       if (registryUrls) {
